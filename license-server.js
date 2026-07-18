@@ -1,171 +1,144 @@
-const crypto = require("crypto");
-const express = require("express");
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
+const { Pool } = require('pg');
 
 const app = express();
-app.use(express.json({ limit: "16kb" }));
-app.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-KWV-App-Id, X-KWV-API-Version, X-KWV-Timestamp, X-KWV-Nonce, X-KWV-Signature");
-    if (req.method === "OPTIONS") return res.sendStatus(204);
-    next();
+app.use(cors());
+// Raw body is required for accurate webhook signature verification
+app.use(express.json({
+    verify: (req, res, buf) => {
+        req.rawBody = buf;
+    }
+}));
+
+const PORT = process.env.PORT || 3000;
+
+// --- 1. Database Connection (PostgreSQL) ---
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false } // Required for Render DBs
 });
 
-const licenses = new Map();
-const sessions = new Map();
-const nonces = new Set();
+// --- 2. Email Transporter Setup ---
+const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: process.env.SMTP_PORT,
+    secure: process.env.SMTP_PORT == 465, // true for 465, false for other ports
+    auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+    },
+});
 
-function sha256(value) {
-    return crypto.createHash("sha256").update(String(value), "utf8").digest("hex");
+// --- Helper: Generate License Key ---
+function generateLicenseKey() {
+    const segment = () => crypto.randomBytes(2).toString('hex').toUpperCase();
+    return `KWV-${segment()}-${segment()}-${segment()}-${segment()}`; // Format: KWV-XXXX-XXXX-XXXX-XXXX
 }
 
-function randomToken(bytes = 32) {
-    return crypto.randomBytes(bytes).toString("base64url");
-}
+// --- 3. Razorpay Webhook Endpoint ---
+app.post('/v1/razorpay/webhook', async (req, res) => {
+    const signature = req.headers['x-razorpay-signature'];
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
 
-function licenseHash(rawKey) {
-    return sha256("kwv-license-key:" + String(rawKey || "").trim());
-}
+    try {
+        // Signature Verification
+        const expectedSignature = crypto
+            .createHmac('sha256', webhookSecret)
+            .update(req.rawBody) // using raw body for perfect match
+            .digest('hex');
 
-function seedDemoLicense() {
-    const email = String(process.env.DEMO_LICENSE_EMAIL || "keshavv.aep@gmail.com").trim().toLowerCase();
-    const key = String(process.env.DEMO_LICENSE_KEY || "KWV-D4B2C-9F9CF-FCBFE-06FC2-6044F-B69D1").trim();
-    licenses.set(licenseHash(key), {
-        id: "lic_demo",
-        email,
-        status: "active",
-        subscriptionStatus: "active",
-        expiresAt: null,
-        deviceId: "",
-        activation: null
-    });
-    console.log(`Demo license: ${email} / ${key}`);
-}
+        if (expectedSignature !== signature) {
+            console.error('Invalid Razorpay Signature');
+            return res.status(400).send('Invalid signature');
+        }
 
-function reject(res, status, code, message) {
-    return res.status(status).json({ code, message });
-}
+        const event = req.body.event;
+        
+        // Process only payment captured event
+        if (event === 'payment.captured' || event === 'order.paid') {
+            const paymentEntity = req.body.payload.payment.entity;
+            const customerEmail = paymentEntity.email;
+            
+            if (!customerEmail) throw new Error("No email found in webhook payload");
 
-function makeOfflineToken(payload) {
-    // Production: sign this as RS256/JWS with a private key and publish only the public key to the extension.
-    return Buffer.from(JSON.stringify(payload)).toString("base64url") + ".replace-with-real-signature";
-}
+            // Generate Key
+            const newLicenseKey = generateLicenseKey();
 
-function createSession(license, activationId) {
-    const sessionToken = randomToken();
-    const requestSigningSecret = randomToken();
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    sessions.set(sha256(sessionToken), {
-        licenseHash: license.licenseKeyHash,
-        activationId,
-        requestSigningSecret,
-        requestSecretHash: sha256(requestSigningSecret),
-        expiresAt
-    });
-    return { sessionToken, requestSigningSecret, expiresAt };
-}
+            // Save to Database
+            const insertQuery = `
+                INSERT INTO licenses (key, email, machine_id, status)
+                VALUES ($1, $2, null, 'active')
+            `;
+            await pool.query(insertQuery, [newLicenseKey, customerEmail]);
+            console.log(`License generated for ${customerEmail}: ${newLicenseKey}`);
 
-function verifySignature(req, session) {
-    const signature = String(req.get("X-KWV-Signature") || "");
-    const timestamp = String(req.get("X-KWV-Timestamp") || "");
-    const nonce = String(req.get("X-KWV-Nonce") || "");
-    const appId = String(req.get("X-KWV-App-Id") || "");
-    if (!signature || !timestamp || !nonce || !appId) return false;
-    if (Math.abs(Date.now() - Date.parse(timestamp)) > 5 * 60 * 1000) return false;
-    const nonceKey = `${appId}:${nonce}`;
-    if (nonces.has(nonceKey)) return false;
-    nonces.add(nonceKey);
+            // Send Email
+            const downloadUrl = process.env.EXTENSION_DOWNLOAD_URL || 'https://keshavwithvelo.com/download';
+            const mailOptions = {
+                from: process.env.SMTP_FROM,
+                to: customerEmail,
+                subject: 'Your Keshav With Velo License Key',
+                text: `Thank you for purchasing Keshav With Velo!\n\nYour Activation Key is:\n${newLicenseKey}\n\nYou can download the extension here:\n${downloadUrl}\n\nNote: This key will lock to the first device you use it on.\n\nRegards,\nTeam Keshav With Velo`
+            };
 
-    const body = req.body ? JSON.stringify(req.body) : "";
-    const apiPath = req.path.replace(/^\/v1/, "");
-    const canonical = [req.method.toUpperCase(), apiPath, timestamp, nonce, sha256(body)].join("\n");
-    const expected = "sha256=" + crypto.createHmac("sha256", session.requestSigningSecret).update(canonical, "utf8").digest("hex");
-    if (signature.length !== expected.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-}
+            await transporter.sendMail(mailOptions);
+            console.log(`Email sent to ${customerEmail}`);
+        }
 
-function assertLicenseUsable(license, deviceId) {
-    if (!license) return "License key is invalid.";
-    if (license.status !== "active") return "License is not active.";
-    if (!["active", "lifetime"].includes(license.subscriptionStatus)) return "Subscription is not active.";
-    if (license.expiresAt && Date.now() >= Date.parse(license.expiresAt)) return "License has expired.";
-    if (license.deviceId && license.deviceId !== deviceId) return "This license is already activated on another device.";
-    return "";
-}
-
-app.post("/v1/licenses/activate", (req, res) => {
-    const body = req.body || {};
-    const email = String(body.email || "").trim().toLowerCase();
-    const deviceId = String(body.deviceId || "");
-    const keyHash = body.licenseKey ? licenseHash(body.licenseKey) : String(body.licenseKeyHash || "");
-    const license = licenses.get(keyHash);
-    const problem = assertLicenseUsable(license, deviceId);
-
-    if (!license || problem) {
-        const code = problem === "This license is already activated on another device." ? "DEVICE_ALREADY_BOUND" : "ACTIVATION_REJECTED";
-        return reject(res, code === "DEVICE_ALREADY_BOUND" ? 409 : 403, code, problem || "License key is invalid.");
+        // Return 200 OK so Razorpay knows webhook was received
+        res.status(200).json({ status: 'ok' });
+    } catch (error) {
+        console.error('Webhook Error:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
-    if (license.email !== email) return reject(res, 403, "EMAIL_NOT_REGISTERED", "Email does not match this license.");
+});
 
-    if (!license.deviceId) {
-        license.deviceId = deviceId;
-        license.activation = {
-            id: randomToken(12),
-            fingerprintVersion: body.fingerprintVersion,
-            signalsHash: body.signalsHash,
-            extensionVersion: body.extensionVersion,
-            activatedAt: new Date().toISOString()
-        };
+// --- 4. Extension Endpoint: Validate & Bind License ---
+app.post('/v1/license/validate', async (req, res) => {
+    const { licenseKey, machineId } = req.body;
+
+    if (!licenseKey || !machineId) {
+        return res.status(400).json({ valid: false, message: 'Missing licenseKey or machineId' });
     }
 
-    license.licenseKeyHash = keyHash;
-    license.lastVerifiedAt = new Date().toISOString();
-    const session = createSession(license, license.activation.id);
-    const offlineUntil = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
+    try {
+        // Fetch license from DB
+        const result = await pool.query('SELECT * FROM licenses WHERE key = $1', [licenseKey]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ valid: false, message: 'Invalid License Key' });
+        }
 
-    res.json({
-        active: true,
-        sessionToken: session.sessionToken,
-        requestSigningSecret: session.requestSigningSecret,
-        offlineToken: makeOfflineToken({ deviceId, exp: Math.floor(Date.parse(offlineUntil) / 1000) }),
-        activationDate: license.activation.activatedAt,
-        lastVerificationAt: license.lastVerifiedAt,
-        offlineUntil,
-        licenseStatus: license.status,
-        subscriptionStatus: license.subscriptionStatus,
-        expiresAt: license.expiresAt
-    });
+        const license = result.rows[0];
+
+        if (license.status !== 'active') {
+            return res.status(403).json({ valid: false, message: 'License is revoked or inactive' });
+        }
+
+        // Check Device Lock Logic
+        if (!license.machine_id) {
+            // First time activation: Bind to this PC
+            await pool.query('UPDATE licenses SET machine_id = $1 WHERE key = $2', [machineId, licenseKey]);
+            return res.json({ valid: true, message: 'License activated and bound to this device successfully!' });
+        } else if (license.machine_id === machineId) {
+            // Same PC: Allow access
+            return res.json({ valid: true, message: 'License verified successfully.' });
+        } else {
+            // Different PC: Reject
+            return res.status(403).json({ valid: false, message: 'License is already in use on another device.' });
+        }
+
+    } catch (error) {
+        console.error('Validation Error:', error);
+        res.status(500).json({ valid: false, message: 'Server error during validation' });
+    }
 });
 
-app.post("/v1/licenses/verify", (req, res) => {
-    const bearer = String(req.get("Authorization") || "").replace(/^Bearer\s+/i, "");
-    const session = sessions.get(sha256(bearer));
-    if (!session || Date.now() >= Date.parse(session.expiresAt)) return reject(res, 401, "SESSION_INVALID", "License session expired.");
-    if (!verifySignature(req, session)) return reject(res, 401, "BAD_SIGNATURE", "Request signature is invalid.");
-
-    const body = req.body || {};
-    const license = licenses.get(String(body.licenseKeyHash || ""));
-    const problem = assertLicenseUsable(license, String(body.deviceId || ""));
-    if (problem) return reject(res, 403, problem.indexOf("another device") >= 0 ? "DEVICE_ALREADY_BOUND" : "VERIFY_REJECTED", problem);
-
-    license.lastVerifiedAt = new Date().toISOString();
-    const offlineUntil = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
-    res.json({
-        active: true,
-        lastVerificationAt: license.lastVerifiedAt,
-        offlineUntil,
-        offlineToken: makeOfflineToken({ deviceId: body.deviceId, exp: Math.floor(Date.parse(offlineUntil) / 1000) }),
-        licenseStatus: license.status,
-        subscriptionStatus: license.subscriptionStatus,
-        expiresAt: license.expiresAt
-    });
-});
-
-app.get("/health", (req, res) => {
-    res.json({ ok: true, service: "kwv-license-server" });
-});
-
-seedDemoLicense();
-app.listen(process.env.PORT || 8787, () => {
-    console.log(`License API listening on ${process.env.PORT || 8787}`);
+// --- Start Server ---
+app.listen(PORT, () => {
+    console.log(`License server is running on port ${PORT}`);
 });
