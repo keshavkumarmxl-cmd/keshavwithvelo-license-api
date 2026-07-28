@@ -226,7 +226,7 @@ app.post('/api/verify-license', async (req, res) => {
     }
 });
 
-app.get('/admin', requireAdmin, (req, res) => res.type('html').send(`<!doctype html><title>KWV License Admin</title><style>body{font:15px Arial;max-width:850px;margin:40px auto}input,button{padding:9px;margin:4px}pre{white-space:pre-wrap;background:#f4f4f4;padding:14px}</style><h1>Keshav With Velo — License Admin</h1><input id=q placeholder="Email or key" size=35><button onclick="search()">Search</button><button onclick="create()">Create + send</button><button onclick="reset()">Reset device</button><button onclick="resend()">Resend key</button><pre id=o>Ready.</pre><script>const o=document.querySelector('#o'),q=document.querySelector('#q');async function call(url,opts){let r=await fetch(url,opts);let x=await r.json();if(!r.ok)throw Error(x.error||'Request failed');o.textContent=JSON.stringify(x,null,2)}function search(){call('/admin/api/licenses?q='+encodeURIComponent(q.value))}function create(){let email=prompt('Customer email');if(email)call('/admin/api/licenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})})}function resend(){call('/admin/api/licenses/'+encodeURIComponent(q.value)+'/resend',{method:'POST'})}function reset(){if(confirm('Reset device binding?'))call('/admin/api/licenses/'+encodeURIComponent(q.value)+'/reset-device',{method:'POST'})}</script>`));
+app.get('/admin', requireAdmin, (req, res) => res.type('html').send(`<!doctype html><title>KWV License Admin</title><style>body{font:15px Arial;max-width:850px;margin:40px auto}input,button{padding:9px;margin:4px}pre{white-space:pre-wrap;background:#f4f4f4;padding:14px}</style><h1>Keshav With Velo — License Admin</h1><input id=q placeholder="Email or key" size=35><button onclick="search()">Search</button><button onclick="create()">Create + send</button><button onclick="reset()">Reset device</button><button onclick="resend()">Resend key</button><button onclick="changeKey()">Change key + send</button><pre id=o>Loading licenses…</pre><script>const o=document.querySelector('#o'),q=document.querySelector('#q');async function call(url,opts){let r=await fetch(url,opts);let x=await r.json();if(!r.ok)throw Error(x.error||'Request failed');o.textContent=JSON.stringify(x,null,2)}function search(){call('/admin/api/licenses?q='+encodeURIComponent(q.value)).catch(e=>o.textContent=e.message)}function create(){let email=prompt('Customer email');if(email)call('/admin/api/licenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})}).then(search)}function resend(){call('/admin/api/licenses/'+encodeURIComponent(q.value)+'/resend',{method:'POST'})}function reset(){if(confirm('Reset device binding?'))call('/admin/api/licenses/'+encodeURIComponent(q.value)+'/reset-device',{method:'POST'}).then(search)}function changeKey(){if(!q.value)return alert('Enter the existing key first.');if(confirm('Replace this key? The old key will stop working.'))call('/admin/api/licenses/'+encodeURIComponent(q.value)+'/change-key',{method:'POST'}).then(search)}search()</script>`));
 
 app.get('/admin/api/licenses', requireAdmin, async (req, res, next) => {
     try { const q = `%${String(req.query.q || '').trim()}%`; const rows = await pool.query('SELECT key, email, machine_id, status FROM licenses WHERE email ILIKE $1 OR key ILIKE $1 ORDER BY email LIMIT 50', [q]); res.json(rows.rows); } catch (e) { next(e); }
@@ -239,6 +239,16 @@ app.post('/admin/api/licenses/:key/resend', requireAdmin, async (req, res, next)
 });
 app.post('/admin/api/licenses/:key/reset-device', requireAdmin, async (req, res, next) => {
     try { const result = await pool.query('UPDATE licenses SET machine_id=NULL WHERE key=$1 RETURNING key,email', [normalizeLicenseKey(req.params.key)]); if (!result.rows.length) return res.status(404).json({ error: 'License not found.' }); res.json({ reset:true,email:result.rows[0].email }); } catch (e) { next(e); }
+});
+app.post('/admin/api/licenses/:key/change-key', requireAdmin, async (req, res, next) => {
+    try {
+        const oldKey = normalizeLicenseKey(req.params.key);
+        const newKey = generateLicenseKey();
+        const result = await pool.query('UPDATE licenses SET key=$1 WHERE key=$2 RETURNING key,email,machine_id,status', [newKey, oldKey]);
+        if (!result.rows.length) return res.status(404).json({ error: 'License not found.' });
+        await sendLicenseEmail(result.rows[0].email, newKey);
+        res.json({ replaced:true, oldKey, key:newKey, email:result.rows[0].email, deviceBindingPreserved:!!result.rows[0].machine_id });
+    } catch (e) { next(e); }
 });
 
 // --- Start Server ---
