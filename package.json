@@ -2,9 +2,10 @@
   "name": "kwv-backend",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "license-server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node license-server.js",
+    "test": "node --check license-server.js"
   },
   "keywords": [],
   "author": "",
