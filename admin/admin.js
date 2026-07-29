@@ -35,6 +35,7 @@ document.getElementById("loginBtn").addEventListener("click", async () => {
     });
     localStorage.setItem(tokenKey, data.token);
     show("Logged in.");
+    await loadMaintenanceSetting();
   } catch (error) {
     show(error);
   }
@@ -112,12 +113,16 @@ document.getElementById("clearTutorialBtn").addEventListener("click", () => {
   document.getElementById("tutorialUrl").value = "";
 });
 
+async function loadMaintenanceSetting() {
+  const data = await api("/api/admin/settings/maintenance");
+  document.getElementById("maintenanceActive").value = data.isActive ? "true" : "false";
+  document.getElementById("maintenanceMessage").value = data.message || "";
+  return data;
+}
+
 document.getElementById("loadMaintenanceBtn").addEventListener("click", async () => {
   try {
-    const data = await api("/api/admin/settings/maintenance");
-    document.getElementById("maintenanceActive").value = data.isActive ? "true" : "false";
-    document.getElementById("maintenanceMessage").value = data.message || "";
-    show(data);
+    show(await loadMaintenanceSetting());
   } catch (error) {
     show(error);
   }
@@ -125,13 +130,16 @@ document.getElementById("loadMaintenanceBtn").addEventListener("click", async ()
 
 document.getElementById("saveMaintenanceBtn").addEventListener("click", async () => {
   try {
-    show(await api("/api/admin/settings/maintenance", {
+    const data = await api("/api/admin/settings/maintenance", {
       method: "POST",
       body: JSON.stringify({
         isActive: document.getElementById("maintenanceActive").value === "true",
         message: document.getElementById("maintenanceMessage").value.trim()
       })
-    }));
+    });
+    document.getElementById("maintenanceActive").value = data.isActive ? "true" : "false";
+    document.getElementById("maintenanceMessage").value = data.message || "";
+    show(data);
   } catch (error) {
     show(error);
   }
@@ -152,3 +160,9 @@ document.getElementById("versionBtn").addEventListener("click", async () => {
     show(error);
   }
 });
+
+if (token()) {
+  loadMaintenanceSetting().then((data) => {
+    show(data);
+  }).catch(() => {});
+}
