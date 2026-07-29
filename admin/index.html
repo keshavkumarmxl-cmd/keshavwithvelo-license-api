@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keshav With Velo Admin</title>
+  <style>
+    body { margin: 0; background: #050505; color: #f7f7f7; font-family: Inter, Arial, sans-serif; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 18px 24px; border-bottom: 1px solid rgba(255,255,255,.12); background: #090909; }
+    main { padding: 24px; display: grid; gap: 18px; }
+    section { border: 1px solid rgba(255,255,255,.12); border-radius: 8px; padding: 18px; background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.025)); }
+    input, button, select, textarea { min-height: 40px; border-radius: 8px; border: 1px solid rgba(255,255,255,.14); background: #111; color: #fff; padding: 0 12px; }
+    button { cursor: pointer; font-weight: 800; background: #d91414; border-color: #ff3030; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+    pre { white-space: pre-wrap; max-height: 360px; overflow: auto; background: #020202; padding: 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,.08); }
+    h1, h2 { margin: 0 0 12px; }
+    label { display: grid; gap: 6px; color: #b8bdc8; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Keshav With Velo Admin</h1>
+    <button id="logoutBtn">Logout</button>
+  </header>
+  <main>
+    <section id="loginPanel">
+      <h2>Admin Login</h2>
+      <div class="row">
+        <input id="email" type="email" placeholder="Admin email">
+        <input id="password" type="password" placeholder="Password">
+        <button id="loginBtn">Login</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Search Licenses</h2>
+      <div class="row">
+        <input id="licenseSearch" placeholder="Email, name, or key hint">
+        <button data-action="licenses">Search</button>
+        <button data-action="users">View Customers</button>
+        <button data-action="attempts">Failed Attempts</button>
+        <button data-action="versions">Versions</button>
+      </div>
+      <pre id="output">Login first.</pre>
+    </section>
+
+    <div class="grid">
+      <section>
+        <h2>License Actions</h2>
+        <div class="row">
+          <input id="licenseId" placeholder="License ID">
+          <button data-license-action="block">Block</button>
+          <button data-license-action="unblock">Unblock</button>
+          <button data-license-action="reset-device">Reset Device</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Tutorial Video</h2>
+        <div class="row">
+          <input id="tutorialUrl" placeholder="YouTube tutorial link">
+          <button id="loadTutorialBtn">Load Current</button>
+          <button id="saveTutorialBtn">Save Tutorial Link</button>
+          <button id="clearTutorialBtn">Clear</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Website Maintenance</h2>
+        <div class="row">
+          <select id="maintenanceActive">
+            <option value="false">Off - Website Normal</option>
+            <option value="true">On - Maintenance Mode</option>
+          </select>
+          <input id="maintenanceMessage" placeholder="Optional maintenance message">
+          <button id="loadMaintenanceBtn">Load Current</button>
+          <button id="saveMaintenanceBtn">Save Maintenance</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Manual License</h2>
+        <div class="grid">
+          <label>Name<input id="manualName" placeholder="Customer name"></label>
+          <label>Email<input id="manualEmail" type="email" placeholder="customer@gmail.com"></label>
+          <label>Type<select id="manualType"><option>standard</option><option>lifetime</option><option>trial</option></select></label>
+          <label>Expiry Days<input id="manualDays" type="number" value="365"></label>
+        </div>
+        <p><button id="manualBtn">Generate License</button></p>
+      </section>
+
+      <section>
+        <h2>Add Version</h2>
+        <div class="grid">
+          <label>Version<input id="version" placeholder="1.0.1"></label>
+          <label>Download Link or Path<input id="downloadPath" placeholder="https://drive.google.com/drive/folders/..."></label>
+          <label>Notes<textarea id="notes" placeholder="Release notes"></textarea></label>
+          <label>Active<select id="isActive"><option value="true">true</option><option value="false">false</option></select></label>
+        </div>
+        <p><button id="versionBtn">Save Version</button></p>
+      </section>
+    </div>
+  </main>
+  <script src="admin.js"></script>
+</body>
+</html>
