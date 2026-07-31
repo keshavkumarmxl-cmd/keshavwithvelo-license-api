@@ -72,13 +72,14 @@ document.querySelectorAll("[data-license-action]").forEach((button) => {
 
 document.getElementById("manualBtn").addEventListener("click", async () => {
   try {
+    const expiryDaysValue = document.getElementById("manualDays").value.trim();
     show(await api("/api/admin/manual-license", {
       method: "POST",
       body: JSON.stringify({
         name: document.getElementById("manualName").value,
         email: document.getElementById("manualEmail").value,
         licenseType: document.getElementById("manualType").value,
-        expiryDays: Number(document.getElementById("manualDays").value || 365)
+        expiryDays: expiryDaysValue === "" ? 0 : Number(expiryDaysValue)
       })
     }));
   } catch (error) {

@@ -85,7 +85,7 @@
           <label>Name<input id="manualName" placeholder="Customer name"></label>
           <label>Email<input id="manualEmail" type="email" placeholder="customer@gmail.com"></label>
           <label>Type<select id="manualType"><option>standard</option><option>lifetime</option><option>trial</option></select></label>
-          <label>Expiry Days<input id="manualDays" type="number" value="365"></label>
+          <label>Expiry Days<input id="manualDays" type="number" min="0" value="0" placeholder="0 = Permanent"></label>
         </div>
         <p><button id="manualBtn">Generate License</button></p>
       </section>
@@ -102,6 +102,6 @@
       </section>
     </div>
   </main>
-  <script src="admin.js?v=20260730-maintenance-autoload"></script>
+  <script src="admin.js?v=20260801-permanent-manual-license"></script>
 </body>
 </html>
