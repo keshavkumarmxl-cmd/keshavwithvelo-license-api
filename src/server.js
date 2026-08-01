@@ -28,11 +28,24 @@ const allowedOrigins = new Set([
   "file://"
 ].filter(Boolean));
 
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (allowedOrigins.has(origin)) return true;
+  if (origin === "null") return true;
+
+  // Adobe CEP panels can report non-standard local origins depending on
+  // After Effects/CEF version and the user's OS. These origins are required
+  // for extension activation but are still scoped to local extension runtimes.
+  if (/^(file|cep|chrome-extension):\/\//i.test(origin)) return true;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(origin)) return true;
+
+  return false;
+}
+
 app.use(cors({
   origin: config.nodeEnv === "production"
     ? (origin, callback) => {
-        if (!origin || allowedOrigins.has(origin)) return callback(null, true);
-        if (origin === "null") return callback(null, true);
+        if (isAllowedOrigin(origin)) return callback(null, true);
         return callback(new Error(`CORS blocked for origin: ${origin}`));
       }
     : true,
