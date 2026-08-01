@@ -162,8 +162,13 @@ function shouldRelinkDevice(license) {
 function relinkLicenseDevice({ license, deviceHash }) {
   return db.transaction(() => {
     const existingDevice = db.prepare(`
-      SELECT id FROM devices WHERE license_id = ? AND hardware_fingerprint_hash = ?
+      SELECT id, blocked_at FROM devices WHERE license_id = ? AND hardware_fingerprint_hash = ?
     `).get(license.id, deviceHash);
+    if (existingDevice?.blocked_at) {
+      const error = new Error("This device is blocked for this license");
+      error.code = "DEVICE_BLOCKED";
+      throw error;
+    }
     const deviceId = existingDevice?.id || db.prepare(`
       INSERT INTO devices (license_id, hardware_fingerprint_hash)
       VALUES (?, ?)
@@ -501,9 +506,21 @@ async function handleActivate(req, res) {
 
   if (license.device_id) {
     const device = db.prepare("SELECT * FROM devices WHERE id = ?").get(license.device_id);
+    if (device?.blocked_at && device.hardware_fingerprint_hash === deviceHash) {
+      logAttempt(req, { email, licenseKey: normalizedKey, deviceHash, result: "failed", reason: "Device blocked" });
+      return res.status(403).json({ status: "blocked", reason: "This device is blocked for this license" });
+    }
     if (device?.hardware_fingerprint_hash !== deviceHash) {
       if (shouldRelinkDevice(license)) {
-        relinkLicenseDevice({ license, deviceHash });
+        try {
+          relinkLicenseDevice({ license, deviceHash });
+        } catch (error) {
+          if (error.code === "DEVICE_BLOCKED") {
+            logAttempt(req, { email, licenseKey: normalizedKey, deviceHash, result: "failed", reason: "Device blocked" });
+            return res.status(403).json({ status: "blocked", reason: "This device is blocked for this license" });
+          }
+          throw error;
+        }
         clearFailedAttempts(req, email);
         logAttempt(req, { email, licenseKey: normalizedKey, deviceHash, result: "success", reason: "Auto-relinked license device" });
         return res.json({ status: "success", message: "License re-linked to this device" });
@@ -524,10 +541,20 @@ async function handleActivate(req, res) {
   }
 
   const tx = db.transaction(() => {
-    const deviceResult = db.prepare(`
+    const existingDevice = db.prepare(`
+      SELECT id, blocked_at FROM devices WHERE license_id = ? AND hardware_fingerprint_hash = ?
+    `).get(license.id, deviceHash);
+
+    if (existingDevice?.blocked_at) {
+      const error = new Error("This device is blocked for this license");
+      error.code = "DEVICE_BLOCKED";
+      throw error;
+    }
+
+    const deviceId = existingDevice?.id || db.prepare(`
       INSERT INTO devices (license_id, hardware_fingerprint_hash)
       VALUES (?, ?)
-    `).run(license.id, deviceHash);
+    `).run(license.id, deviceHash).lastInsertRowid;
 
     db.prepare(`
       UPDATE licenses
@@ -536,10 +563,19 @@ async function handleActivate(req, res) {
           device_id = ?,
           last_verification = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(deviceResult.lastInsertRowid, license.id);
+    `).run(deviceId, license.id);
+    db.prepare("UPDATE devices SET last_activity = CURRENT_TIMESTAMP WHERE id = ?").run(deviceId);
   });
 
-  tx();
+  try {
+    tx();
+  } catch (error) {
+    if (error.code === "DEVICE_BLOCKED") {
+      logAttempt(req, { email, licenseKey: normalizedKey, deviceHash, result: "failed", reason: "Device blocked" });
+      return res.status(403).json({ status: "blocked", reason: "This device is blocked for this license" });
+    }
+    throw error;
+  }
   await activateMongoLicense({ licenseHash, email, deviceHash });
   clearFailedAttempts(req, email);
   logAttempt(req, { email, licenseKey: normalizedKey, deviceHash, result: "success", reason: "Activated" });
@@ -580,6 +616,9 @@ async function handleVerifyLicense(req, res) {
   if (!license.device_id) return res.status(403).json({ status: "invalid", reason: "License is not activated" });
 
   const device = db.prepare("SELECT * FROM devices WHERE id = ?").get(license.device_id);
+  if (device?.blocked_at && device.hardware_fingerprint_hash === deviceHash) {
+    return res.status(403).json({ status: "blocked", reason: "This device is blocked for this license" });
+  }
   if (!device || device.hardware_fingerprint_hash !== deviceHash) {
     return res.status(403).json({ status: "invalid", reason: "Device mismatch" });
   }

@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS devices (
   hardware_fingerprint_hash TEXT NOT NULL,
   activation_timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_activity TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  blocked_at TEXT,
   UNIQUE(license_id, hardware_fingerprint_hash),
   FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE CASCADE
 );
@@ -119,6 +120,12 @@ CREATE INDEX IF NOT EXISTS idx_activation_attempts_created ON activation_attempt
 
 try {
   db.prepare("ALTER TABLE licenses ADD COLUMN device_rebind_count INTEGER NOT NULL DEFAULT 0").run();
+} catch (error) {
+  if (!String(error.message || "").includes("duplicate column")) throw error;
+}
+
+try {
+  db.prepare("ALTER TABLE devices ADD COLUMN blocked_at TEXT").run();
 } catch (error) {
   if (!String(error.message || "").includes("duplicate column")) throw error;
 }

@@ -348,14 +348,55 @@ adminRoutes.get("/licenses", (req, res) => {
   const rows = db.prepare(`
     SELECT licenses.id, licenses.license_hint, licenses.status, licenses.activation_date,
       licenses.device_id, licenses.last_verification, licenses.expiry_date, licenses.license_type,
-      licenses.created_at, users.name, users.email
+      licenses.device_rebind_count, licenses.created_at, users.name, users.email,
+      COUNT(devices.id) AS device_count,
+      SUM(CASE WHEN devices.blocked_at IS NULL THEN 1 ELSE 0 END) AS allowed_device_count,
+      SUM(CASE WHEN devices.blocked_at IS NOT NULL THEN 1 ELSE 0 END) AS blocked_device_count
     FROM licenses
     JOIN users ON users.id = licenses.user_id
+    LEFT JOIN devices ON devices.license_id = licenses.id
     WHERE users.email LIKE ? OR users.name LIKE ? OR licenses.license_hint LIKE ?
+    GROUP BY licenses.id
     ORDER BY licenses.created_at DESC
   `).all(q, q, q);
 
   res.json(rows);
+});
+
+adminRoutes.get("/licenses/:id/devices", (req, res) => {
+  const license = db.prepare(`
+    SELECT licenses.id, licenses.license_hint, licenses.status, licenses.device_id,
+      licenses.device_rebind_count, users.name, users.email
+    FROM licenses
+    JOIN users ON users.id = licenses.user_id
+    WHERE licenses.id = ?
+  `).get(req.params.id);
+
+  if (!license) return res.status(404).json({ error: "License not found" });
+
+  const devices = db.prepare(`
+    SELECT id, hardware_fingerprint_hash, activation_timestamp, last_activity, blocked_at,
+      CASE WHEN id = ? THEN 1 ELSE 0 END AS is_current
+    FROM devices
+    WHERE license_id = ?
+    ORDER BY blocked_at IS NOT NULL, last_activity DESC
+  `).all(license.device_id || 0, req.params.id).map((device) => ({
+    id: device.id,
+    fingerprintHint: `${String(device.hardware_fingerprint_hash || "").slice(0, 12)}...${String(device.hardware_fingerprint_hash || "").slice(-8)}`,
+    isCurrent: Boolean(device.is_current),
+    isBlocked: Boolean(device.blocked_at),
+    activationTimestamp: device.activation_timestamp,
+    lastActivity: device.last_activity,
+    blockedAt: device.blocked_at
+  }));
+
+  res.json({
+    ...license,
+    deviceCount: devices.length,
+    allowedDeviceCount: devices.filter((device) => !device.isBlocked).length,
+    blockedDeviceCount: devices.filter((device) => device.isBlocked).length,
+    devices
+  });
 });
 
 adminRoutes.post("/licenses/:id/block", (req, res) => {
@@ -378,6 +419,35 @@ adminRoutes.post("/licenses/:id/reset-device", (req, res) => {
     `).run(req.params.id);
   });
   tx();
+  res.json({ status: "success" });
+});
+
+adminRoutes.post("/licenses/:licenseId/devices/:deviceId/block", (req, res) => {
+  const tx = db.transaction(() => {
+    const device = db.prepare("SELECT * FROM devices WHERE id = ? AND license_id = ?").get(req.params.deviceId, req.params.licenseId);
+    if (!device) {
+      const error = new Error("Device not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    db.prepare("UPDATE devices SET blocked_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.deviceId);
+    db.prepare(`
+      UPDATE licenses
+      SET device_id = NULL,
+          status = CASE WHEN status = 'blocked' THEN 'blocked' ELSE 'inactive' END,
+          last_verification = NULL
+      WHERE id = ? AND device_id = ?
+    `).run(req.params.licenseId, req.params.deviceId);
+  });
+
+  tx();
+  res.json({ status: "success" });
+});
+
+adminRoutes.post("/licenses/:licenseId/devices/:deviceId/unblock", (req, res) => {
+  const result = db.prepare("UPDATE devices SET blocked_at = NULL WHERE id = ? AND license_id = ?").run(req.params.deviceId, req.params.licenseId);
+  if (!result.changes) return res.status(404).json({ error: "Device not found" });
   res.json({ status: "success" });
 });
 

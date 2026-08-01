@@ -70,6 +70,27 @@ document.querySelectorAll("[data-license-action]").forEach((button) => {
   });
 });
 
+document.getElementById("viewDevicesBtn").addEventListener("click", async () => {
+  try {
+    const id = document.getElementById("licenseId").value.trim();
+    show(await api(`/api/admin/licenses/${id}/devices`));
+  } catch (error) {
+    show(error);
+  }
+});
+
+document.querySelectorAll("[data-device-action]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    try {
+      const licenseId = document.getElementById("licenseId").value.trim();
+      const deviceId = document.getElementById("deviceId").value.trim();
+      show(await api(`/api/admin/licenses/${licenseId}/devices/${deviceId}/${button.dataset.deviceAction}`, { method: "POST" }));
+    } catch (error) {
+      show(error);
+    }
+  });
+});
+
 document.getElementById("manualBtn").addEventListener("click", async () => {
   try {
     const expiryDaysValue = document.getElementById("manualDays").value.trim();
