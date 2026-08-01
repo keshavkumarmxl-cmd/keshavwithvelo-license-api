@@ -63,6 +63,34 @@ function getActiveDownloadPath() {
   return activeVersion?.download_path || config.extensionZipPath;
 }
 
+function parseVersionParts(version) {
+  const numeric = String(version || "")
+    .trim()
+    .split(".")
+    .map((part) => {
+      const match = String(part || "").match(/\d+/);
+      return match ? Number(match[0]) : 0;
+    });
+
+  return [
+    numeric[0] || 0,
+    numeric[1] || 0,
+    numeric[2] || 0
+  ];
+}
+
+function compareVersions(left, right) {
+  const a = parseVersionParts(left);
+  const b = parseVersionParts(right);
+
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] > b[i]) return 1;
+    if (a[i] < b[i]) return -1;
+  }
+
+  return 0;
+}
+
 function purchaseDownloadUrl({ email, licenseKey }) {
   const downloadPath = getActiveDownloadPath();
   if (isExternalDownloadUrl(downloadPath)) return downloadPath;
@@ -245,6 +273,43 @@ publicRoutes.get("/site-settings/maintenance", async (req, res) => {
 publicRoutes.get("/pricing", (req, res) => {
   res.json({ plans: getCheckoutPlans().filter((plan) => plan.isActive) });
 });
+
+function handleCheckUpdate(req, res) {
+  const currentVersion = String(req.body?.currentVersion || req.query?.currentVersion || "0.0.0").trim();
+  const activeVersion = db.prepare(`
+    SELECT version, download_path, notes, created_at
+    FROM extension_versions
+    WHERE is_active = 1
+    ORDER BY id DESC
+    LIMIT 1
+  `).get();
+
+  if (!activeVersion) {
+    return res.json({
+      status: "success",
+      updateAvailable: false,
+      currentVersion,
+      latestVersion: currentVersion,
+      message: "No active extension version found."
+    });
+  }
+
+  const updateAvailable = compareVersions(activeVersion.version, currentVersion) > 0;
+  return res.json({
+    status: "success",
+    updateAvailable,
+    currentVersion,
+    latestVersion: activeVersion.version,
+    version: activeVersion.version,
+    downloadUrl: updateAvailable ? activeVersion.download_path : null,
+    notes: activeVersion.notes || "",
+    createdAt: activeVersion.created_at,
+    message: updateAvailable ? "Update available." : "No update available."
+  });
+}
+
+publicRoutes.get("/check-update", handleCheckUpdate);
+publicRoutes.post("/check-update", handleCheckUpdate);
 
 publicRoutes.post("/razorpay/order", validate(razorpayOrderSchema), async (req, res, next) => {
   try {
