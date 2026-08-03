@@ -12,7 +12,8 @@
     "start": "node src/server.js",
     "init-db": "node src/db/init.js",
     "sync-mongo-backup": "node src/scripts/syncMongoBackup.js",
-    "import-mongo-backup": "node src/scripts/importMongoBackupToSqlite.js"
+    "import-mongo-backup": "node src/scripts/importMongoBackupToSqlite.js",
+    "bulk-update-email": "node src/scripts/sendBulkUpdateEmail.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
